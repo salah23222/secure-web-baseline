@@ -1,0 +1,32 @@
+# Dependencies
+vendor/
+node_modules/
+
+# Environment & secrets
+.env
+.env.*
+config/database.local.php
+
+# Logs
+*.log
+logs/
+
+# IDE & editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Claude Code
+.claude/
+
+# Temporary files
+*.tmp
+*.bak
+storage/

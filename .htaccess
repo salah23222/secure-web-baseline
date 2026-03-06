@@ -1,0 +1,12 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Route everything through public/
+    RewriteRule ^$ public/ [L]
+    RewriteRule (.*) public/$1 [L]
+</IfModule>
+
+# Block direct access to sensitive directories
+<IfModule mod_rewrite.c>
+    RewriteRule ^(app|config|scripts|logs|storage)/ - [F,L]
+</IfModule>
