@@ -1,0 +1,42 @@
+name: Secure Web Baseline CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  php-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+
+      - name: PHP Syntax Check
+        run: |
+          echo "Running PHP syntax check..."
+          find . -name "*.php" -print0 | xargs -0 -n1 php -l
+
+
+  security-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Basic Security Scan
+        run: |
+          echo "Checking for risky PHP functions..."
+          ! grep -R "eval(" . --include="*.php"
+          ! grep -R "base64_decode(" . --include="*.php"
+          ! grep -R "shell_exec(" . --include="*.php"
+          ! grep -R "exec(" . --include="*.php"
