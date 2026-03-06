@@ -73,7 +73,7 @@ secure-web-baseline/
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/your-username/secure-web-baseline.git
+   git clone https://github.com/salah23222/secure-web-baseline.git
    cd secure-web-baseline
    ```
 
