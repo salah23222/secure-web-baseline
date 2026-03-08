@@ -12,6 +12,7 @@ declare(strict_types=1);
 use App\Core\SecurityHeaders;
 use App\Core\Session;
 use App\Core\CSRF;
+use App\Core\AuditLogger;
 
 /*
 |--------------------------------------------------------------------------
@@ -53,6 +54,21 @@ spl_autoload_register(function (string $class): void {
 
 /*
 |--------------------------------------------------------------------------
+| Ensure storage directory exists and is protected
+|--------------------------------------------------------------------------
+*/
+$storageDir = BASE_PATH . '/storage';
+if (!is_dir($storageDir)) {
+    mkdir($storageDir, 0700, true);
+}
+// Write a .htaccess to block direct HTTP access to storage/
+$htaccessPath = $storageDir . '/.htaccess';
+if (!file_exists($htaccessPath)) {
+    file_put_contents($htaccessPath, "Require all denied\n");
+}
+
+/*
+|--------------------------------------------------------------------------
 | Start Secure Session
 |--------------------------------------------------------------------------
 */
@@ -72,6 +88,7 @@ SecurityHeaders::send();
 */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!CSRF::verify()) {
+        AuditLogger::csrfFailure();
         http_response_code(403);
         if (file_exists(APP_PATH . '/Views/errors/403.php')) {
             require APP_PATH . '/Views/errors/403.php';

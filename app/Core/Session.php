@@ -60,6 +60,9 @@ class Session
         }
 
         if (!hash_equals($_SESSION['_fingerprint'], $fingerprint)) {
+            // AuditLogger may not be loaded yet at session start time,
+            // so we use a deferred flag and log it after bootstrap completes.
+            $_SESSION['_hijack_flag'] = true;
             self::destroy();
             header('Location: /login');
             exit;
