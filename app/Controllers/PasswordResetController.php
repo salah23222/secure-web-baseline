@@ -32,6 +32,7 @@ class PasswordResetController
     {
         // Rate limit: max 5 reset requests per 15 minutes per IP
         if (RateLimiter::tooManyAttempts('forgot')) {
+            AuditLogger::rateLimitHit('forgot');
             $retry = RateLimiter::retryAfter('forgot');
             Session::flash('error', "Too many attempts. Please wait {$retry} seconds.");
             redirect('/forgot-password');
@@ -49,8 +50,7 @@ class PasswordResetController
             redirect('/forgot-password');
         }
 
-        // Always show the same success message regardless of whether
-        // the email exists — prevents user enumeration.
+        // Always show the same message — prevents user enumeration
         $user = User::findByEmail($email);
 
         if ($user !== null) {
@@ -75,7 +75,6 @@ class PasswordResetController
             redirect('/login');
         }
 
-        // Validate token exists before showing the form
         if (PasswordReset::findValid($email, $token) === null) {
             Session::flash('error', 'This reset link is invalid or has expired.');
             redirect('/forgot-password');
@@ -91,15 +90,14 @@ class PasswordResetController
         $password = $_POST['password'] ?? '';
         $confirm  = $_POST['password_confirmation'] ?? '';
 
-        // Rate limit reset attempts
         if (RateLimiter::tooManyAttempts('reset')) {
+            AuditLogger::rateLimitHit('reset');
             $retry = RateLimiter::retryAfter('reset');
             Session::flash('error', "Too many attempts. Please wait {$retry} seconds.");
-            redirect("/reset-password?email=" . urlencode($email) . "&token=" . urlencode($token));
+            redirect('/reset-password?email=' . urlencode($email) . '&token=' . urlencode($token));
         }
         RateLimiter::hit('reset');
 
-        // Validate inputs
         $v = Validator::make(['password' => $password, 'password_confirmation' => $confirm])
             ->required('password', 'Password')
             ->minLength('password', 8, 'Password')
@@ -107,35 +105,33 @@ class PasswordResetController
 
         if ($v->fails()) {
             Session::flash('error', $v->firstError());
-            redirect("/reset-password?email=" . urlencode($email) . "&token=" . urlencode($token));
+            redirect('/reset-password?email=' . urlencode($email) . '&token=' . urlencode($token));
         }
 
-        // Validate token
         $record = PasswordReset::findValid($email, $token);
         if ($record === null) {
             Session::flash('error', 'This reset link is invalid or has expired.');
             redirect('/forgot-password');
         }
 
-        // Find user
         $user = User::findByEmail($email);
         if ($user === null) {
             Session::flash('error', 'This reset link is invalid or has expired.');
             redirect('/forgot-password');
         }
 
-        // Update password
         User::updatePassword((int) $user['id'], password_hash($password, PASSWORD_DEFAULT));
 
-        // Invalidate the token
         PasswordReset::markUsed((int) $record['id']);
         PasswordReset::purgeExpired();
 
-        // Clear any lockouts
         RateLimiter::clearFailedLogins($email);
         RateLimiter::clear('reset');
 
-        AuditLogger::log('password_reset_success', ['email' => $email, 'user_id' => $user['id']]);
+        AuditLogger::log('password_reset_success', [
+            'email'   => $email,
+            'user_id' => $user['id'],
+        ]);
 
         CSRF::regenerate();
         Session::flash('success', 'Password updated successfully. Please log in.');
@@ -145,27 +141,50 @@ class PasswordResetController
     // ── Email sender ─────────────────────────────────────────────────
 
     /**
-     * Send a password reset email.
+     * Send a password reset email using PHP mail().
      *
-     * In production, replace this with a proper mailer (PHPMailer, Symfony Mailer, etc.)
-     * For now it uses PHP's built-in mail() as a placeholder.
+     * Inputs are sanitised to prevent email header injection:
+     *  - Name:  strip newlines and null bytes
+     *  - Email: validated upstream by Validator::email(), double-checked here
+     *  - Token: URL-encoded in the link body, never placed in headers
+     *
+     * For production, replace mail() with PHPMailer or Symfony Mailer
+     * which handle encoding and header injection automatically.
      */
     private static function sendEmail(string $email, string $name, string $rawToken): void
     {
-        $host     = $_SERVER['HTTP_HOST'] ?? 'localhost';
-        $scheme   = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $link     = "{$scheme}://{$host}/reset-password"
-                  . '?email=' . urlencode($email)
-                  . '&token=' . urlencode($rawToken);
+        // Guard: reject email addresses containing header-injection characters
+        if (preg_match('/[\r\n\0]/', $email)) {
+            return;
+        }
 
-        $subject = 'Password Reset Request';
-        $body    = "Hello {$name},\r\n\r\n"
-                 . "We received a request to reset your password.\r\n\r\n"
-                 . "Click the link below (valid for 60 minutes):\r\n{$link}\r\n\r\n"
-                 . "If you did not request this, ignore this email — your account is safe.\r\n\r\n"
-                 . "Secure Web Baseline";
+        // Sanitise display name — strip newlines and null bytes
+        $safeName = preg_replace('/[\r\n\0]/', '', $name);
+        $safeName = mb_substr($safeName, 0, 100, 'UTF-8');
 
-        $headers = "From: no-reply@{$host}\r\nContent-Type: text/plain; charset=UTF-8";
+        $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+
+        $link = "{$scheme}://{$host}/reset-password"
+              . '?email=' . rawurlencode($email)
+              . '&token=' . rawurlencode($rawToken);
+
+        $subject = 'Password Reset Request — Secure Web Baseline';
+
+        $body = "Hello {$safeName},\r\n\r\n"
+              . "We received a request to reset the password for your account.\r\n\r\n"
+              . "Click the link below to set a new password (valid for 60 minutes):\r\n"
+              . "{$link}\r\n\r\n"
+              . "If you did not request this, you can safely ignore this email.\r\n"
+              . "Your account remains secure.\r\n\r\n"
+              . "— Secure Web Baseline";
+
+        $headers = implode("\r\n", [
+            'From: no-reply@' . $host,
+            'Content-Type: text/plain; charset=UTF-8',
+            'MIME-Version: 1.0',
+            'X-Mailer: PHP/' . PHP_MAJOR_VERSION, // Major only — avoids exact version leak
+        ]);
 
         mail($email, $subject, $body, $headers);
     }

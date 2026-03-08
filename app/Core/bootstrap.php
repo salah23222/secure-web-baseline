@@ -31,13 +31,17 @@ error_reporting(E_ALL);
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 
+// Remove PHP version fingerprint as early as possible
+header_remove('X-Powered-By');
+ini_set('expose_php', '0');
+
 /*
 |--------------------------------------------------------------------------
 | Autoload (PSR-4 style)
 |--------------------------------------------------------------------------
 */
 spl_autoload_register(function (string $class): void {
-    $prefix = 'App\\';
+    $prefix  = 'App\\';
     $baseDir = APP_PATH . '/';
 
     if (strncmp($prefix, $class, strlen($prefix)) !== 0) {
@@ -61,7 +65,6 @@ $storageDir = BASE_PATH . '/storage';
 if (!is_dir($storageDir)) {
     mkdir($storageDir, 0700, true);
 }
-// Write a .htaccess to block direct HTTP access to storage/
 $htaccessPath = $storageDir . '/.htaccess';
 if (!file_exists($htaccessPath)) {
     file_put_contents($htaccessPath, "Require all denied\n");
@@ -110,7 +113,6 @@ CSRF::generate();
 /** Render a view with extracted data. */
 function view(string $name, array $data = []): void
 {
-    // Guard against path traversal
     if (str_contains($name, '..') || str_contains($name, "\0")) {
         throw new RuntimeException('Invalid view name.');
     }
@@ -143,7 +145,6 @@ function csrf_field(): string
 /** Safe redirect to an internal path. Prevents open redirect. */
 function redirect(string $path): never
 {
-    // Normalize: must start with exactly one slash, never "//"
     $path = '/' . ltrim($path, '/');
     header('Location: ' . $path);
     exit;

@@ -15,6 +15,9 @@ class SecurityHeaders
     {
         $nonce = self::generateNonce();
 
+        // Remove PHP version fingerprint header
+        header_remove('X-Powered-By');
+
         header('X-Frame-Options: DENY');
         header('X-Content-Type-Options: nosniff');
         header('Referrer-Policy: strict-origin-when-cross-origin');
@@ -45,6 +48,7 @@ class SecurityHeaders
         if (self::$nonce === '') {
             self::$nonce = base64_encode(random_bytes(16));
         }
+
         return self::$nonce;
     }
 
