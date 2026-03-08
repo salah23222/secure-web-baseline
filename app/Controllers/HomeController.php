@@ -14,14 +14,16 @@ class HomeController
         view('home/index');
     }
 
-    /** JSON health check — useful for monitoring. */
+    /**
+     * JSON health check — useful for monitoring.
+     * PHP version is intentionally omitted to avoid server fingerprinting.
+     */
     public function health(): void
     {
         header('Content-Type: application/json');
         echo json_encode([
             'status'    => 'ok',
             'session'   => session_status() === PHP_SESSION_ACTIVE,
-            'php'       => PHP_VERSION,
             'timestamp' => date('c'),
         ]);
     }

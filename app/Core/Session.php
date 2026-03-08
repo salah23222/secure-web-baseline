@@ -9,9 +9,9 @@ namespace App\Core;
  */
 class Session
 {
-    private const SESSION_NAME = 'SWB_SESSION';
-    private const IDLE_TIMEOUT = 1800;       // 30 minutes
-    private const REGEN_INTERVAL = 900;      // 15 minutes
+    private const SESSION_NAME   = 'SWB_SESSION';
+    private const IDLE_TIMEOUT   = 1800;   // 30 minutes
+    private const REGEN_INTERVAL = 900;    // 15 minutes
 
     private static bool $started = false;
 
@@ -35,8 +35,8 @@ class Session
             'lifetime' => 0,
             'path'     => '/',
             'secure'   => self::isHttps(),
-            'httponly'  => true,
-            'samesite'  => 'Strict',
+            'httponly' => true,
+            'samesite' => 'Strict',
         ]);
 
         session_start();
@@ -48,8 +48,38 @@ class Session
     }
 
     /**
-     * Basic session hijack detection via browser + subnet fingerprint.
+     * Destroy current session completely and issue a fresh session ID.
+     * Used on logout to prevent session fixation after re-login.
      */
+    public static function destroy(): void
+    {
+        // Clear all session data
+        $_SESSION = [];
+
+        // Expire the session cookie immediately
+        if (ini_get('session.use_cookies')) {
+            $params = session_get_cookie_params();
+            setcookie(session_name(), '', [
+                'expires'  => time() - 3600,
+                'path'     => $params['path'],
+                'domain'   => $params['domain'],
+                'secure'   => $params['secure'],
+                'httponly' => $params['httponly'],
+                'samesite' => 'Strict',
+            ]);
+        }
+
+        session_destroy();
+        self::$started = false;
+
+        // Start a brand-new session with a fresh ID so flash messages work
+        // and no old session ID can be reused by an attacker.
+        self::start();
+        session_regenerate_id(true);
+    }
+
+    // ── Hijack detection ────────────────────────────────────────────
+
     private static function preventHijacking(): void
     {
         $fingerprint = self::generateFingerprint();
@@ -60,10 +90,7 @@ class Session
         }
 
         if (!hash_equals($_SESSION['_fingerprint'], $fingerprint)) {
-            // AuditLogger may not be loaded yet at session start time,
-            // so we use a deferred flag and log it after bootstrap completes.
-            $_SESSION['_hijack_flag'] = true;
-            self::destroy();
+            self::forceExpire();
             header('Location: /login');
             exit;
         }
@@ -74,30 +101,34 @@ class Session
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 
-        // Use a subnet prefix so minor IP changes (mobile) don't break the session.
-        // IPv4: use /24 (first 3 octets). IPv6: use /48 (first 3 groups).
         if (str_contains($ip, ':')) {
+            // IPv6 — use first 3 groups (/48 subnet)
             $groups = explode(':', $ip);
             $subnet = implode(':', array_slice($groups, 0, 3));
         } else {
-            $parts = explode('.', $ip);
+            // IPv4 — use first 3 octets (/24 subnet)
+            $parts  = explode('.', $ip);
             $subnet = implode('.', array_slice($parts, 0, 3));
         }
 
         return hash('sha256', $ua . $subnet);
     }
 
+    // ── Idle timeout ─────────────────────────────────────────────────
+
     private static function checkIdleTimeout(): void
     {
         if (isset($_SESSION['_last_activity'])) {
             if (time() - $_SESSION['_last_activity'] > self::IDLE_TIMEOUT) {
-                self::destroy();
+                self::forceExpire();
                 header('Location: /login');
                 exit;
             }
         }
         $_SESSION['_last_activity'] = time();
     }
+
+    // ── Periodic regeneration ────────────────────────────────────────
 
     private static function periodicRegenerate(): void
     {
@@ -112,7 +143,11 @@ class Session
         }
     }
 
-    public static function destroy(): void
+    /**
+     * Hard-expire the session without starting a new one.
+     * Used internally for hijack/timeout detection.
+     */
+    private static function forceExpire(): void
     {
         $_SESSION = [];
 
@@ -123,8 +158,8 @@ class Session
                 'path'     => $params['path'],
                 'domain'   => $params['domain'],
                 'secure'   => $params['secure'],
-                'httponly'  => $params['httponly'],
-                'samesite'  => 'Strict',
+                'httponly' => $params['httponly'],
+                'samesite' => 'Strict',
             ]);
         }
 
@@ -132,7 +167,7 @@ class Session
         self::$started = false;
     }
 
-    // ── Simple key-value API ────────────────────────────────────────
+    // ── Simple key-value API ─────────────────────────────────────────
 
     public static function set(string $key, mixed $value): void
     {
@@ -154,7 +189,7 @@ class Session
         unset($_SESSION[$key]);
     }
 
-    // ── Flash messages (one-time read) ──────────────────────────────
+    // ── Flash messages ────────────────────────────────────────────────
 
     public static function flash(string $key, mixed $value): void
     {
@@ -168,7 +203,7 @@ class Session
         return $value;
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────
 
     private static function isHttps(): bool
     {

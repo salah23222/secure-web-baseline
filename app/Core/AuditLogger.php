@@ -8,21 +8,15 @@ namespace App\Core;
  * Audit logger for security-relevant events.
  *
  * Writes structured JSON log entries to storage/audit.log.
- * Each entry is one JSON object per line (NDJSON format) for easy parsing.
- *
- * Events logged:
- *  - login_success, login_failed, logout
- *  - register_success, register_failed
- *  - account_locked, rate_limit_hit
- *  - csrf_failure, session_hijack_attempt
+ * Each entry is one JSON object per line (NDJSON) for easy parsing.
  */
 class AuditLogger
 {
-    private const LOG_FILE    = BASE_PATH . '/storage/audit.log';
-    private const LOG_DIR     = BASE_PATH . '/storage';
+    private const LOG_FILE     = BASE_PATH . '/storage/audit.log';
+    private const LOG_DIR      = BASE_PATH . '/storage';
     private const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB before rotation
 
-    // ── Public event methods ─────────────────────────────────────────
+    // ── Named event helpers ──────────────────────────────────────────
 
     public static function loginSuccess(string $email, int $userId): void
     {
@@ -69,9 +63,9 @@ class AuditLogger
         self::log('session_hijack_attempt', []);
     }
 
-    // ── Core write ───────────────────────────────────────────────────
+    // ── Generic log (used by PasswordResetController and others) ────
 
-    private static function log(string $event, array $context): void
+    public static function log(string $event, array $context): void
     {
         self::ensureStorageDir();
         self::rotateIfNeeded();
@@ -79,19 +73,19 @@ class AuditLogger
         $entry = [
             'timestamp' => date('c'),
             'event'     => $event,
-            'ip'        => self::getIp(),
+            'ip'        => $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0',
             'ua'        => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 200),
             'context'   => $context,
         ];
 
-        $line = json_encode($entry, JSON_UNESCAPED_UNICODE) . "\n";
-        file_put_contents(self::LOG_FILE, $line, FILE_APPEND | LOCK_EX);
+        file_put_contents(
+            self::LOG_FILE,
+            json_encode($entry, JSON_UNESCAPED_UNICODE) . "\n",
+            FILE_APPEND | LOCK_EX
+        );
     }
 
-    private static function getIp(): string
-    {
-        return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
-    }
+    // ── Internals ────────────────────────────────────────────────────
 
     private static function ensureStorageDir(): void
     {
@@ -103,8 +97,7 @@ class AuditLogger
     private static function rotateIfNeeded(): void
     {
         if (file_exists(self::LOG_FILE) && filesize(self::LOG_FILE) > self::MAX_LOG_SIZE) {
-            $rotated = self::LOG_FILE . '.' . date('Ymd_His');
-            rename(self::LOG_FILE, $rotated);
+            rename(self::LOG_FILE, self::LOG_FILE . '.' . date('Ymd_His'));
         }
     }
 }
