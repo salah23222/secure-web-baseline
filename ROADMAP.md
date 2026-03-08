@@ -4,10 +4,10 @@ Planned improvements for Secure Web Baseline, organized by phase.
 
 ## Phase 1 — Hardening
 
-- [ ] Rate limiting on authentication endpoints (login, register).
-- [ ] Account lockout after repeated failed login attempts.
+- [x] Rate limiting on authentication endpoints (login, register). ✅ v1.1.0
+- [x] Account lockout after repeated failed login attempts. ✅ v1.1.0
 - [ ] Configurable password policy (minimum length, complexity rules).
-- [ ] Audit logging for security-relevant events (login, logout, failed attempts).
+- [x] Audit logging for security-relevant events (login, logout, failed attempts). ✅ v1.1.0
 
 ## Phase 2 — Access Control
 
@@ -19,7 +19,7 @@ Planned improvements for Secure Web Baseline, organized by phase.
 ## Phase 3 — Infrastructure
 
 - [ ] Middleware pipeline (before/after request hooks).
-- [ ] Environment-based configuration (`.env` file loader).
+- [x] Environment-based configuration (`.env` file loader). ✅ v1.1.0
 - [ ] Structured error and exception handler with log levels.
 - [ ] Database migration runner.
 

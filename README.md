@@ -4,6 +4,7 @@
 ![Security](https://img.shields.io/badge/security-CSRF%20%7C%20CSP%20%7C%20Sessions-red)
 ![Architecture](https://img.shields.io/badge/architecture-MVC-orange)
 ![Open Source](https://img.shields.io/badge/Open%20Source-Yes-brightgreen)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 
 A lightweight, security-first PHP MVC starter framework for building secure web applications.
 
@@ -42,6 +43,9 @@ The full payment schedule table listing each instalment due date and amount, alo
 - **PDO Database Layer** — Singleton wrapper with prepared statements; query, fetch, insert, update, delete helpers; transaction support.
 - **Input Validation** — Fluent validator for required, email, minLength, maxLength, integer, numeric, url, in, confirmed, and regex rules.
 - **Authentication Flow** — Register, login (with session fixation prevention), logout, protected dashboard.
+- **Rate Limiting** — IP-based throttle on login and register endpoints (max 10 attempts per 5-minute window).
+- **Account Lockout** — Automatic 15-minute lockout after 5 consecutive failed login attempts.
+- **Audit Logging** — Structured NDJSON log for all security events with automatic rotation at 10 MB.
 - **Clean MVC Structure** — Controllers, Models, Views, Core classes, and a simple URI-based router.
 
 ## Project Structure
@@ -60,7 +64,9 @@ secure-web-baseline/
 │   │   ├── CSRF.php                 # CSRF token generation & verification
 │   │   ├── SecurityHeaders.php      # HTTP security headers + CSP nonce
 │   │   ├── Validator.php            # Fluent input validator
-│   │   └── Database.php             # Singleton PDO wrapper
+│   │   ├── Database.php             # Singleton PDO wrapper
+│   │   ├── RateLimiter.php          # IP rate limiting & account lockout
+│   │   └── AuditLogger.php          # Security event audit log
 │   ├── Models/
 │   │   └── User.php                 # User CRUD operations
 │   └── Views/
@@ -70,12 +76,17 @@ secure-web-baseline/
 │       ├── home/index.php
 │       └── errors/403.php, 404.php
 ├── config/
-│   └── database.php                 # Database credentials
+│   └── database.php                 # Database credentials (reads from .env)
+├── docs/
+│   └── screenshots/                 # UI screenshots for documentation
 ├── public/
 │   ├── index.php                    # Front controller
 │   └── .htaccess                    # Apache URL rewriting
 ├── scripts/
 │   └── schema.sql                   # Database schema
+├── storage/                         # Runtime files: audit log, rate limit data
+│   └── .gitkeep
+├── .env.example                     # Environment variable template
 ├── .htaccess                        # Root rewrite to public/
 ├── README.md
 ├── SECURITY.md
@@ -97,7 +108,7 @@ secure-web-baseline/
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/your-username/secure-web-baseline.git
+   git clone https://github.com/salah23222/secure-web-baseline.git
    cd secure-web-baseline
    ```
 
@@ -107,9 +118,21 @@ secure-web-baseline/
    mysql -u root -p < scripts/schema.sql
    ```
 
-3. **Configure database credentials:**
+3. **Configure environment:**
 
-   Edit `config/database.php` with your MySQL host, username, password, and database name.
+   ```bash
+   cp .env.example .env
+   ```
+
+   Then edit `.env` with your database credentials:
+
+   ```env
+   DB_HOST=127.0.0.1
+   DB_PORT=3306
+   DB_NAME=secure_web_baseline
+   DB_USERNAME=root
+   DB_PASSWORD=your_password
+   ```
 
 4. **Set up your web server:**
 
@@ -128,13 +151,57 @@ secure-web-baseline/
    </VirtualHost>
    ```
 
-   **Option B — XAMPP / localhost:**
+   **Option B — Nginx:**
+
+   ```nginx
+   server {
+       listen 80;
+       server_name secure-baseline.local;
+       root /path/to/secure-web-baseline/public;
+       index index.php;
+
+       location / {
+           try_files $uri $uri/ /index.php?$query_string;
+       }
+
+       location ~ \.php$ {
+           fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+           fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+           include fastcgi_params;
+       }
+
+       # Block access to sensitive directories
+       location ~ ^/(app|config|scripts|logs|storage)/ {
+           deny all;
+       }
+   }
+   ```
+
+   **Option C — XAMPP / localhost:**
 
    Place the project in `htdocs/` and access it via `http://localhost/secure-web-baseline/`. The root `.htaccess` will route requests through `public/index.php`.
 
-5. **Open in browser:**
+5. **Ensure storage directory is writable:**
+
+   ```bash
+   chmod 700 storage/
+   ```
+
+6. **Open in browser:**
 
    Navigate to `http://secure-baseline.local/` (or your configured URL).
+
+## Default Database Credentials (Development)
+
+| Setting  | Value                  |
+| -------- | ---------------------- |
+| Host     | `127.0.0.1`            |
+| Port     | `3306`                 |
+| Database | `secure_web_baseline`  |
+| Username | `root`                 |
+| Password | *(empty)*              |
+
+> ⚠️ Always change these before deploying to production. Use `.env` to manage credentials securely.
 
 ## Available Routes
 
@@ -169,10 +236,13 @@ secure-web-baseline/
 | Session Fixation   | `session_regenerate_id(true)` on login                                       |
 | User Enumeration   | Generic error message on login failure                                       |
 | Password Storage   | `password_hash()` with `PASSWORD_DEFAULT` (currently bcrypt)                 |
+| Rate Limiting      | Max 10 attempts per 5-minute window per IP on login and register             |
+| Account Lockout    | 15-minute lockout after 5 consecutive failed login attempts                  |
+| Audit Logging      | NDJSON log of all auth events with IP, user-agent, and timestamp             |
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for planned improvements including RBAC, rate limiting, audit logging, middleware, API auth, and more.
+See [ROADMAP.md](ROADMAP.md) for planned improvements including RBAC, password reset, 2FA, middleware, API auth, and more.
 
 ## Contributing
 
