@@ -15,8 +15,11 @@ class SecurityHeaders
     {
         $nonce = self::generateNonce();
 
-        // Remove PHP version fingerprint header
+        // Remove PHP version fingerprint
         header_remove('X-Powered-By');
+
+        // Explicit charset on every HTML response
+        header('Content-Type: text/html; charset=UTF-8');
 
         header('X-Frame-Options: DENY');
         header('X-Content-Type-Options: nosniff');

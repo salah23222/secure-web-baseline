@@ -6,51 +6,44 @@ namespace App\Core;
 
 /**
  * File-based rate limiter and account lockout.
- * No external dependencies — uses PHP session + server-side file storage.
  *
  * Two independent mechanisms:
  *  1. IP-based rate limiting   — max N attempts per window per IP.
  *  2. Account lockout          — max N failed logins per email before lockout.
+ *
+ * Also provides purgeExpired() for scheduled cleanup (cron).
  */
 class RateLimiter
 {
     // ── IP Rate Limit ────────────────────────────────────────────────
-    private const IP_MAX_ATTEMPTS  = 10;    // max attempts
-    private const IP_WINDOW        = 300;   // per 5-minute window
+    private const IP_MAX_ATTEMPTS = 10;
+    private const IP_WINDOW       = 300;  // 5 minutes
 
     // ── Account Lockout ──────────────────────────────────────────────
-    private const LOCK_MAX_ATTEMPTS = 5;    // failed logins before lockout
-    private const LOCK_DURATION     = 900;  // 15 minutes lockout
+    private const LOCK_MAX_ATTEMPTS = 5;
+    private const LOCK_DURATION     = 900; // 15 minutes
 
     // ── Storage ──────────────────────────────────────────────────────
     private const STORAGE_DIR = BASE_PATH . '/storage/rate_limits';
 
     // ── IP Rate Limiting ─────────────────────────────────────────────
 
-    /**
-     * Check if the current IP has exceeded the rate limit for a given action.
-     */
     public static function tooManyAttempts(string $action): bool
     {
-        $key  = self::ipKey($action);
-        $data = self::read($key);
+        $data = self::read(self::ipKey($action));
 
         if ($data === null) {
             return false;
         }
 
-        // Reset if window has passed
         if (time() - $data['window_start'] > self::IP_WINDOW) {
-            self::delete($key);
+            self::delete(self::ipKey($action));
             return false;
         }
 
         return $data['attempts'] >= self::IP_MAX_ATTEMPTS;
     }
 
-    /**
-     * Increment the attempt counter for the current IP + action.
-     */
     public static function hit(string $action): void
     {
         $key  = self::ipKey($action);
@@ -64,38 +57,28 @@ class RateLimiter
         self::write($key, $data);
     }
 
-    /**
-     * Clear rate limit for the current IP + action (on successful login).
-     */
     public static function clear(string $action): void
     {
         self::delete(self::ipKey($action));
     }
 
-    /**
-     * Seconds remaining in the current rate-limit window.
-     */
     public static function retryAfter(string $action): int
     {
         $data = self::read(self::ipKey($action));
         if ($data === null) {
             return 0;
         }
-        $remaining = self::IP_WINDOW - (time() - $data['window_start']);
-        return max(0, $remaining);
+
+        return max(0, self::IP_WINDOW - (time() - $data['window_start']));
     }
 
     // ── Account Lockout ──────────────────────────────────────────────
 
-    /**
-     * Record a failed login attempt for a given email.
-     */
     public static function recordFailedLogin(string $email): void
     {
         $key  = self::emailKey($email);
         $data = self::read($key) ?? ['attempts' => 0, 'locked_at' => null];
 
-        // Reset if a previous lockout has expired
         if ($data['locked_at'] !== null && time() - $data['locked_at'] > self::LOCK_DURATION) {
             $data = ['attempts' => 0, 'locked_at' => null];
         }
@@ -109,12 +92,10 @@ class RateLimiter
         self::write($key, $data);
     }
 
-    /**
-     * Check if an account is currently locked out.
-     */
     public static function isAccountLocked(string $email): bool
     {
         $data = self::read(self::emailKey($email));
+
         if ($data === null || $data['locked_at'] === null) {
             return false;
         }
@@ -127,25 +108,78 @@ class RateLimiter
         return true;
     }
 
-    /**
-     * Seconds remaining on the account lockout.
-     */
     public static function lockoutEndsIn(string $email): int
     {
         $data = self::read(self::emailKey($email));
         if ($data === null || $data['locked_at'] === null) {
             return 0;
         }
-        $remaining = self::LOCK_DURATION - (time() - $data['locked_at']);
-        return max(0, $remaining);
+
+        return max(0, self::LOCK_DURATION - (time() - $data['locked_at']));
     }
 
-    /**
-     * Clear failed login counter on successful authentication.
-     */
     public static function clearFailedLogins(string $email): void
     {
         self::delete(self::emailKey($email));
+    }
+
+    // ── Scheduled Cleanup ────────────────────────────────────────────
+
+    /**
+     * Delete all expired rate-limit and lockout files.
+     *
+     * Call from a cron job, e.g.:
+     *   * * * * * php /path/to/project/scripts/purge_rate_limits.php
+     *
+     * Or call manually from a CLI script.
+     */
+    public static function purgeExpired(): int
+    {
+        $dir = self::STORAGE_DIR;
+        if (!is_dir($dir)) {
+            return 0;
+        }
+
+        $deleted = 0;
+        $now     = time();
+
+        foreach (glob($dir . '/*.json') ?: [] as $file) {
+            $json = file_get_contents($file);
+            if ($json === false) {
+                continue;
+            }
+
+            $data = json_decode($json, true);
+            if (!is_array($data)) {
+                unlink($file);
+                $deleted++;
+                continue;
+            }
+
+            $expired = false;
+
+            // IP window record
+            if (isset($data['window_start'])) {
+                $expired = ($now - $data['window_start']) > self::IP_WINDOW;
+            }
+
+            // Lockout record
+            if (isset($data['locked_at'])) {
+                if ($data['locked_at'] === null) {
+                    // Not locked — expire if all attempts cleared
+                    $expired = $data['attempts'] === 0;
+                } else {
+                    $expired = ($now - $data['locked_at']) > self::LOCK_DURATION;
+                }
+            }
+
+            if ($expired) {
+                unlink($file);
+                $deleted++;
+            }
+        }
+
+        return $deleted;
     }
 
     // ── Storage helpers ──────────────────────────────────────────────
@@ -153,6 +187,7 @@ class RateLimiter
     private static function ipKey(string $action): string
     {
         $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+
         return 'ip_' . $action . '_' . hash('sha256', $ip);
     }
 
@@ -164,6 +199,7 @@ class RateLimiter
     private static function filePath(string $key): string
     {
         self::ensureStorageDir();
+
         return self::STORAGE_DIR . '/' . $key . '.json';
     }
 
@@ -173,11 +209,14 @@ class RateLimiter
         if (!file_exists($path)) {
             return null;
         }
+
         $json = file_get_contents($path);
         if ($json === false) {
             return null;
         }
+
         $data = json_decode($json, true);
+
         return is_array($data) ? $data : null;
     }
 
